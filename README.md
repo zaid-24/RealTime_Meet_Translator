@@ -5,6 +5,7 @@ A Windows desktop companion app that shows **real-time translated subtitles** wh
 Built with **Electron + React + TypeScript**, powered by **Azure Speech Translation**.
 
 > **MVP input:** microphone (meeting/system audio capture can be added later).
+<img width="1203" height="831" alt="explorer_SSZ1cOgAWb" src="https://github.com/user-attachments/assets/e0a01a03-8739-4810-8230-34ee7da623d1" />
 
 ---
 
