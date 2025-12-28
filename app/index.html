@@ -1,0 +1,138 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/vite.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Meeting Translator</title>
+    <!-- Azure Speech SDK -->
+    <script src="https://cdn.jsdelivr.net/npm/microsoft-cognitiveservices-speech-sdk@1.28.0/distrib/browser/microsoft.cognitiveservices.speech.sdk.bundle-min.js"></script>
+    <script>
+      // CRITICAL: Aggressive patching for Azure Speech SDK id() issue
+      (function() {
+        if (typeof SpeechSDK === 'undefined') {
+          console.error("SpeechSDK not loaded!");
+          return;
+        }
+        
+        // Universal id() patcher - adds id() to any object with privId
+        function ensureId(obj) {
+          if (!obj || typeof obj !== 'object') return obj;
+          if (typeof obj.id !== 'function' && obj.privId !== undefined) {
+            obj.id = function() { return this.privId; };
+          }
+          return obj;
+        }
+        
+        // Patch all prototypes by creating test instances
+        try {
+          const fmt = SpeechSDK.AudioStreamFormat.getWaveFormatPCM(16000, 16, 1);
+          const stream = SpeechSDK.AudioInputStream.createPushStream(fmt);
+          
+          // Patch stream prototype chain
+          let p = stream;
+          while (p && p !== Object.prototype) {
+            if (!p.id && p.privId !== undefined) {
+              p.id = function() { return this.privId; };
+            }
+            // Also patch the prototype
+            const proto = Object.getPrototypeOf(p);
+            if (proto && !proto.id) {
+              proto.id = function() { return this.privId; };
+            }
+            p = proto;
+          }
+          
+          // Get the config and patch its internals
+          const config = SpeechSDK.AudioConfig.fromStreamInput(stream);
+          if (config.privSource) {
+            ensureId(config.privSource);
+            let sp = Object.getPrototypeOf(config.privSource);
+            while (sp && sp !== Object.prototype) {
+              if (!sp.id) {
+                sp.id = function() { return this.privId; };
+              }
+              sp = Object.getPrototypeOf(sp);
+            }
+            
+            // CRITICAL: Patch the attach method on the prototype
+            const privSourceProto = Object.getPrototypeOf(config.privSource);
+            if (privSourceProto && privSourceProto.attach) {
+              const origAttach = privSourceProto.attach;
+              privSourceProto.attach = function(audioNodeId) {
+                console.log("[SDK Patch] attach() called");
+                const result = origAttach.call(this, audioNodeId);
+                if (result && result.then) {
+                  return result.then(function(node) {
+                    console.log("[SDK Patch] attach() resolved:", node);
+                    ensureId(node);
+                    // Walk the result's prototype chain too
+                    let np = Object.getPrototypeOf(node);
+                    while (np && np !== Object.prototype) {
+                      if (!np.id) {
+                        np.id = function() { return this.privId; };
+                      }
+                      np = Object.getPrototypeOf(np);
+                    }
+                    return node;
+                  });
+                }
+                return ensureId(result);
+              };
+              console.log("[SDK Patch] Patched attach() on prototype");
+            }
+          }
+          
+          stream.close();
+        } catch (e) {
+          console.error("[SDK Patch] Initial patching failed:", e);
+        }
+        
+        // Wrap TranslationRecognizer constructor to patch audio sources
+        const OrigTranslationRecognizer = SpeechSDK.TranslationRecognizer;
+        SpeechSDK.TranslationRecognizer = function() {
+          console.log("[SDK Patch] TranslationRecognizer constructor called");
+          
+          // Patch all arguments that might be audio configs
+          for (let i = 0; i < arguments.length; i++) {
+            const arg = arguments[i];
+            if (arg && arg.privSource) {
+              console.log("[SDK Patch] Found audioConfig at arg", i);
+              ensureId(arg.privSource);
+              
+              // Patch privSource.attach if it exists
+              if (arg.privSource.attach) {
+                const origAttach = arg.privSource.attach.bind(arg.privSource);
+                arg.privSource.attach = function(audioNodeId) {
+                  console.log("[SDK Patch] privSource.attach() intercepted");
+                  const result = origAttach(audioNodeId);
+                  if (result && result.then) {
+                    return result.then(function(node) {
+                      console.log("[SDK Patch] privSource.attach() resolved:", node);
+                      ensureId(node);
+                      return node;
+                    });
+                  }
+                  return ensureId(result);
+                };
+              }
+            }
+          }
+          
+          // Call original constructor
+          return new OrigTranslationRecognizer(...arguments);
+        };
+        
+        // Copy static methods and properties
+        Object.setPrototypeOf(SpeechSDK.TranslationRecognizer, OrigTranslationRecognizer);
+        SpeechSDK.TranslationRecognizer.prototype = OrigTranslationRecognizer.prototype;
+        
+        console.log("[SDK Patch] Azure Speech SDK patched for Electron");
+      })();
+    </script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>
